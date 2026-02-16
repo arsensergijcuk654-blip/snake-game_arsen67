@@ -6,6 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#87CEEB">
 <title>Мила Змійка</title>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- EmailJS SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&family=Fredoka+One&display=swap" rel="stylesheet">
 <style>
 :root { --sh: #56c246; --sb: #9de88f; --so: #2e7d32; }
@@ -149,6 +154,14 @@ body{background:linear-gradient(180deg,#a8d8f0 0%,#c5eafc 35%,#d4f5c0 70%,#aee06
 .transfer-box{font-family:monospace;font-size:1.1rem;font-weight:700;letter-spacing:3px;background:white;border:3px dashed #4d96ff;border-radius:16px;padding:14px 20px;color:#4d96ff;cursor:pointer;word-break:break-all;max-width:300px;text-align:center;margin:8px 0;box-shadow:0 4px 0 rgba(77,150,255,.2);}
 /* Account lock icon */
 .acct-lock{font-size:.85rem;color:#bbb;flex-shrink:0;}
+/* Cloud sync indicator */
+.cloud-sync{font-size:.7rem;color:#56c246;font-weight:800;display:flex;align-items:center;gap:4px;justify-content:center;margin:2px 0;}
+.sync-dot{width:8px;height:8px;border-radius:50%;background:#56c246;animation:pulse 2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);}}
+.sync-dot.offline{background:#ff6b6b;animation:none;}
+/* Global lb indicator */
+.lb-global-badge{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#4d96ff,#74b9ff);color:white;font-size:.7rem;font-weight:800;border-radius:20px;padding:4px 10px;margin-bottom:8px;}
+.btn-sm{font-size:.82rem!important;padding:8px 18px!important;min-width:140px!important;}
 .acct-new-row{display:flex;align-items:center;gap:8px;width:100%;max-width:300px;margin-top:4px;}
 .acct-new-row .name-input{flex:1;margin:0;}
 .btn-icon-add{width:48px;height:48px;border-radius:50%;border:3px solid #56c246;background:linear-gradient(180deg,#6bcb77,#56c246);color:white;font-size:1.6rem;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 5px 0 #2e7d32;transition:transform .12s,box-shadow .12s;flex-shrink:0;line-height:1;}
@@ -324,6 +337,7 @@ body{background:linear-gradient(180deg,#a8d8f0 0%,#c5eafc 35%,#d4f5c0 70%,#aee06
     <!-- ACCOUNT PICKER -->
     <div id="account-screen" class="screen hidden">
       <div class="screen-title">Хто грає?</div>
+      <div class="cloud-sync" id="syncStatus"><div class="sync-dot" id="syncDot"></div><span id="syncText">перевіряю…</span></div>
       <div class="acct-list" id="acctList"></div>
       <div class="acct-tabs">
         <button class="acct-tab active" id="tab-new" onclick="acctTab('new')">Новий</button>
@@ -358,7 +372,7 @@ body{background:linear-gradient(180deg,#a8d8f0 0%,#c5eafc 35%,#d4f5c0 70%,#aee06
       <button class="btn btn-ghost" style="margin-top:4px;" onclick="showScreen('menu-screen')">Скасувати</button>
     </div>
 
-    <!-- PIN LOGIN (click on locked account) -->
+    <!-- PIN LOGIN -->
     <div id="pin-screen" class="screen hidden">
       <div class="screen-title">Введи PIN</div>
       <div class="acct-confirm-badge" id="pinLoginName" style="margin-bottom:10px;"></div>
@@ -370,6 +384,60 @@ body{background:linear-gradient(180deg,#a8d8f0 0%,#c5eafc 35%,#d4f5c0 70%,#aee06
       </div>
       <div id="pinError" class="pin-error"></div>
       <button class="btn btn-green" onclick="submitLogin()">Увійти!</button>
+      <button class="btn btn-ghost btn-sm" onclick="showForgotScreen()" style="font-size:.78rem;margin-top:-4px;">Забули PIN?</button>
+      <button class="btn btn-ghost" onclick="showScreen('account-screen')">Назад</button>
+    </div>
+
+    <!-- FORGOT PIN — enter email -->
+    <div id="forgot-screen" class="screen hidden">
+      <div class="screen-title" style="font-size:1.3rem;">Відновлення PIN</div>
+      <div class="screen-sub">Введи пошту прив'язану до акаунту</div>
+      <div class="acct-confirm-badge" id="forgotAcctName" style="margin-bottom:8px;"></div>
+      <input class="name-input" id="forgotEmail" type="email" placeholder="твоя@пошта.com" autocomplete="email"/>
+      <div id="forgotError" class="pin-error"></div>
+      <button class="btn btn-blue" onclick="sendResetCode()">Надіслати код</button>
+      <button class="btn btn-ghost" onclick="showScreen('pin-screen')">Назад</button>
+    </div>
+
+    <!-- RESET CODE verification -->
+    <div id="reset-screen" class="screen hidden">
+      <div class="screen-title" style="font-size:1.2rem;">Введи код з листа</div>
+      <div class="screen-sub">Перевір пошту — там 6-значний код</div>
+      <div class="pin-row" style="gap:7px;">
+        <input class="pin-input" id="rc1" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+        <input class="pin-input" id="rc2" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+        <input class="pin-input" id="rc3" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+        <input class="pin-input" id="rc4" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+        <input class="pin-input" id="rc5" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+        <input class="pin-input" id="rc6" type="tel" maxlength="1" inputmode="numeric" placeholder="•" style="width:44px;height:52px;"/>
+      </div>
+      <div style="color:#aaa;font-size:.72rem;font-weight:700;margin:4px 0;">Новий PIN</div>
+      <div class="pin-row">
+        <input class="pin-input" id="np1" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="np2" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="np3" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="np4" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+      </div>
+      <div id="resetError" class="pin-error"></div>
+      <button class="btn btn-green" onclick="verifyResetCode()">Підтвердити</button>
+      <button class="btn btn-ghost" onclick="showScreen('forgot-screen')">Назад</button>
+    </div>
+
+    <!-- EMAIL BIND (from account list → settings) -->
+    <div id="email-screen" class="screen hidden">
+      <div class="screen-title" style="font-size:1.2rem;">Прив'язати пошту</div>
+      <div class="acct-confirm-badge" id="emailAcctName" style="margin-bottom:6px;"></div>
+      <div class="screen-sub">Пошта потрібна для відновлення PIN</div>
+      <input class="name-input" id="bindEmail" type="email" placeholder="твоя@пошта.com" autocomplete="email"/>
+      <div id="emailError" class="pin-error"></div>
+      <div class="acct-hint" style="margin:2px 0 8px;">Підтвердь свій PIN</div>
+      <div class="pin-row">
+        <input class="pin-input" id="ep1" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="ep2" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="ep3" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+        <input class="pin-input" id="ep4" type="tel" maxlength="1" inputmode="numeric" placeholder="•"/>
+      </div>
+      <button class="btn btn-blue" onclick="bindEmail()">Прив'язати</button>
       <button class="btn btn-ghost" onclick="showScreen('account-screen')">Назад</button>
     </div>
 
@@ -1300,7 +1368,16 @@ function showScreen(id){
     if(el) el.classList.remove('hidden');
     overlay.style.pointerEvents='auto';
     if(id==='lb-screen') renderLB();
-    if(id==='account-screen'){ renderAccountList(); }
+    if(id==='account-screen'){
+      renderAccountList();
+      // Update cloud sync status
+      const dot=document.getElementById('syncDot');
+      const txt=document.getElementById('syncText');
+      if(dot&&txt){
+        if(_firebaseReady){dot.className='sync-dot';txt.textContent='☁️ Підключено до хмари';}
+        else{dot.className='sync-dot offline';txt.textContent='📵 Офлайн режим';}
+      }
+    }
     if(id==='menu-screen') updateMenuBadge();
     if(id==='menu-screen'||id==='over-screen'||id==='name-screen') stopMusic();
   } else {
@@ -1364,8 +1441,102 @@ function setSpeed(s,el){
 // ============================================================
 //  ACCOUNT SYSTEM — one best score per player
 // ============================================================
+// ██████████████████████████████████████████████████████
+// 🐍 МИЛА ЗМІЙКА — Налаштування для GitHub Pages
+//
+// КРОК 1: Firebase
+//   1. Відкрий console.firebase.google.com
+//   2. Створи проект → Додай Web app → Скопіюй config
+//   3. Firestore Database → Create → Production mode
+//   4. Rules → вставни:
+//      rules_version = '2';
+//      service cloud.firestore {
+//        match /databases/{db}/documents {
+//          match /snake_accounts/{doc} {
+//            allow read: if true;
+//            allow write: if true; // або restrict як хочеш
+//          }
+//        }
+//      }
+//
+// КРОК 2: EmailJS (для "Забули PIN?")
+//   1. emailjs.com → Sign Up (безкоштовно)
+//   2. Email Services → Add Service → Gmail
+//   3. Email Templates → Create → Поля: to_email, to_name, reset_code, game_name
+//      Тема листа: Твій код відновлення PIN — {{game_name}}
+//      Тіло: Привіт {{to_name}}! Твій код: {{reset_code}} (15 хв)
+//   4. Account → Public Key → скопіюй
+//
+// ██████████████████████████████████████████████████████
+// ⚙️  CONFIG — FILL IN YOUR KEYS BEFORE PUBLISHING
+// ██████████████████████████████████████████████████████
+const FIREBASE_CONFIG = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+const EMAILJS_SERVICE  = "YOUR_EMAILJS_SERVICE_ID";   // e.g. "service_abc123"
+const EMAILJS_TEMPLATE = "YOUR_EMAILJS_TEMPLATE_ID";  // e.g. "template_xyz"
+const EMAILJS_PUBLIC   = "YOUR_EMAILJS_PUBLIC_KEY";   // e.g. "aBcDeFgH"
 // ============================================================
-//  ACCOUNT SYSTEM v3 — with PIN passwords + cross-device transfer
+
+// Firebase init
+let _db = null;
+let _firebaseReady = false;
+(function initFirebase(){
+  try {
+    if(typeof firebase === 'undefined') { console.warn('Firebase not loaded'); return; }
+    if(FIREBASE_CONFIG.apiKey === 'YOUR_API_KEY') {
+      console.warn('Firebase not configured — running in offline mode');
+      return;
+    }
+    firebase.initializeApp(FIREBASE_CONFIG);
+    _db = firebase.firestore();
+    _firebaseReady = true;
+    console.log('Firebase ready ✓');
+    // Sync global LB after init
+    setTimeout(syncLeaderboard, 1000);
+  } catch(e) { console.warn('Firebase init failed:', e); }
+})();
+
+// EmailJS init
+(function initEmailJS(){
+  try {
+    if(typeof emailjs !== 'undefined' && EMAILJS_PUBLIC !== 'YOUR_EMAILJS_PUBLIC_KEY')
+      emailjs.init(EMAILJS_PUBLIC);
+  } catch(e) {}
+})();
+
+// Firestore helpers
+async function fsGetAccount(cloudId){
+  if(!_db||!cloudId) return null;
+  try{ const d=await _db.collection('snake_accounts').doc(cloudId).get();
+       return d.exists?{...d.data(),cloudId:d.id}:null; }catch(e){return null;}
+}
+async function fsSetAccount(cloudId, data){
+  if(!_db||!cloudId) return false;
+  try{ await _db.collection('snake_accounts').doc(cloudId).set(data,{merge:true}); return true; }catch(e){return false;}
+}
+async function fsGetLeaderboard(){
+  if(!_db) return [];
+  try{
+    const snap = await _db.collection('snake_accounts')
+      .where('best','>=',1).orderBy('best','desc').limit(20).get();
+    return snap.docs.map(d=>({...d.data(),cloudId:d.id}));
+  }catch(e){return [];}
+}
+
+// Global LB cache
+let _globalLB = [];
+async function syncLeaderboard(){
+  _globalLB = await fsGetLeaderboard();
+}
+
+// ============================================================
+//  ACCOUNT SYSTEM v3 — with PIN passwords + cloud sync
 // ============================================================
 const ACCT_KEY='snakeAccounts_v3';
 const CUR_KEY='snakeCurrentAcct_v3';
@@ -1414,7 +1585,16 @@ function saveScore(){
   if(!id){showScreen('over-screen');return;}
   const accts=getAccounts();
   const idx=accts.findIndex(x=>x.id===id);
-  if(idx>=0&&score>accts[idx].best){accts[idx].best=score;saveAccounts(accts);}
+  if(idx>=0&&score>accts[idx].best){
+    accts[idx].best=score;
+    saveAccounts(accts);
+    // Push to Firestore
+    const a=accts[idx];
+    if(_firebaseReady&&a.cloudId){
+      fsSetAccount(a.cloudId,{best:score,name:a.name,color:a.color||0,
+        ...(a.email?{email:a.email}:{}),pinHash:a.pinHash||''});
+    }
+  }
   document.getElementById('bestVal').textContent=getBest();
   showScreen('over-screen');
 }
@@ -1432,34 +1612,40 @@ function showNameScreen(){
 
 let _loginTargetId=null;
 
-function addAccount(){
+async function addAccount(){
   const name=document.getElementById('newPlayerName').value.trim().slice(0,14);
   if(!name){document.getElementById('newPlayerName').focus();return;}
   const pin=readPin('newPin');
-  if(pin.length!==4||!/^\d{4}$/.test(pin)){
-    shakeEl('panel-new');return;
-  }
+  if(pin.length!==4||!/^\d{4}$/.test(pin)){shakeEl('panel-new');return;}
   const accts=getAccounts();
   if(accts.length>=8){showToast('Максимум 8 гравців!');return;}
-  if(accts.find(a=>a.name.toLowerCase()===name.toLowerCase())){
-    showToast('Таке ім\'я вже є!');return;
-  }
+  if(accts.find(a=>a.name.toLowerCase()===name.toLowerCase())){showToast('Таке ім\'я вже є!');return;}
+
+  const pinH=hashPin(name,pin);
+  const cloudId=pinH; // Firestore doc ID = pinHash (unique per name+pin)
   const id='a'+Date.now();
-  accts.push({id,name,best:0,color:accts.length%8,pinHash:hashPin(name,pin)});
+  const newAcct={id,name,best:0,color:accts.length%8,pinHash:pinH,cloudId};
+  accts.push(newAcct);
   saveAccounts(accts);
   setCurrentAcct(id);
   document.getElementById('newPlayerName').value='';
   ['1','2','3','4'].forEach(i=>{const el=document.getElementById('newPin'+i);if(el)el.value='';});
-  showToast('Гравець '+name+' створений!','#56c246');
-  updateMenuBadge();
-  renderAccountList();
+
+  // Sync to Firestore
+  if(_firebaseReady){
+    fsSetAccount(cloudId,{name,best:0,color:newAcct.color,pinHash:pinH}).then(ok=>{
+      if(ok) showToast('Гравець '+name+' створений та збережений у хмарі ☁️','#56c246');
+      else showToast('Гравець '+name+' створений (оффлайн)','#56c246');
+    });
+  } else showToast('Гравець '+name+' створений!','#56c246');
+
+  updateMenuBadge();renderAccountList();
 }
 
 function selectAccount(id){
   const a=getAccounts().find(x=>x.id===id);
   if(!a) return;
   if(a.pinHash){
-    // Need PIN login
     _loginTargetId=id;
     document.getElementById('pinLoginName').textContent=a.name;
     document.getElementById('pinError').textContent='';
@@ -1467,11 +1653,28 @@ function selectAccount(id){
     showScreen('pin-screen');
     setTimeout(()=>{const e=document.getElementById('loginPin1');if(e)e.focus();},300);
   } else {
-    setCurrentAcct(id);
-    document.getElementById('bestVal').textContent=a.best;
-    updateMenuBadge();
-    renderAccountList();
+    _activateAccount(id);
   }
+}
+
+async function _activateAccount(id){
+  const accts=getAccounts();
+  const idx=accts.findIndex(x=>x.id===id);
+  if(idx<0) return;
+  const a=accts[idx];
+  // Pull latest best from cloud
+  if(_firebaseReady&&a.cloudId){
+    const cloud=await fsGetAccount(a.cloudId);
+    if(cloud&&cloud.best>a.best){
+      accts[idx].best=cloud.best;
+      if(cloud.email) accts[idx].email=cloud.email;
+      saveAccounts(accts);
+      showToast('Рекорд оновлено з хмари: '+cloud.best+' 🍎','#56c246');
+    }
+  }
+  setCurrentAcct(id);
+  document.getElementById('bestVal').textContent=accts[idx].best;
+  updateMenuBadge();renderAccountList();
 }
 
 function submitLogin(){
@@ -1480,15 +1683,12 @@ function submitLogin(){
   if(!a) return;
   const pin=readPin('loginPin');
   if(hashPin(a.name,pin)===a.pinHash){
-    setCurrentAcct(_loginTargetId);
-    document.getElementById('bestVal').textContent=a.best;
-    _loginTargetId=null;
-    updateMenuBadge();
+    const id=_loginTargetId; _loginTargetId=null;
     showScreen('account-screen');
+    _activateAccount(id); // loads cloud record + sets active
     renderAccountList();
   } else {
-    const err=document.getElementById('pinError');
-    err.textContent='Невірний PIN! Спробуй ще.';
+    document.getElementById('pinError').textContent='Невірний PIN! Спробуй ще.';
     shakeEl('pinError');
     ['1','2','3','4'].forEach(i=>{const el=document.getElementById('loginPin'+i);if(el)el.value='';});
     setTimeout(()=>{const e=document.getElementById('loginPin1');if(e)e.focus();},100);
@@ -1537,66 +1737,66 @@ function acctTab(tab){
   document.getElementById('panel-import').style.display=tab==='import'?'flex':'none';
 }
 
-function importAccount(){
+async function importAccount(){
   const name=document.getElementById('importName').value.trim().slice(0,14);
   const pin=readPin('impPin');
   const codeRaw=document.getElementById('importCode').value.trim();
-
   const accts=getAccounts();
 
-  // Try code-based import first
+  // --- Code-based import ---
   if(codeRaw){
     const data=parseTransferCode(codeRaw);
     if(!data){showToast('Невірний код!');shakeEl('panel-import');return;}
-    // Verify PIN matches the hash in code
-    if(pin.length===4&&hashPin(data.n,pin)!==data.h){showToast('Невірний PIN для цього коду!');shakeEl('panel-import');return;}
-    // Check if already exists
+    if(pin.length===4&&hashPin(data.n,pin)!==data.h){showToast('Невірний PIN!');shakeEl('panel-import');return;}
     const exists=accts.find(a=>a.name.toLowerCase()===data.n.toLowerCase());
     if(exists){
-      // Sync best score
       if(data.b>exists.best){exists.best=data.b;saveAccounts(accts);}
-      setCurrentAcct(exists.id);
-      document.getElementById('bestVal').textContent=getBest();
-      updateMenuBadge();
-      renderAccountList();
-      showToast('Ласкаво повертаєшся, '+data.n+'!','#56c246');
-      return;
+      _activateAccount(exists.id); renderAccountList();
+      showToast('Ласкаво повертаєшся, '+data.n+'! ☁️','#56c246'); return;
     }
     const id='a'+Date.now();
-    accts.push({id,name:data.n,best:data.b,color:data.c,pinHash:data.h});
-    saveAccounts(accts);
-    setCurrentAcct(id);
-    document.getElementById('bestVal').textContent=data.b;
-    updateMenuBadge();
-    renderAccountList();
-    showToast('Акаунт '+data.n+' імпортовано!','#56c246');
-    return;
+    const a2={id,name:data.n,best:data.b,color:data.c,pinHash:data.h,cloudId:data.h};
+    accts.push(a2); saveAccounts(accts);
+    _activateAccount(id); renderAccountList();
+    showToast('Акаунт '+data.n+' імпортовано!','#56c246'); return;
   }
 
-  // Name + PIN import (find by hash match in existing OR create new with same hash)
+  // --- Name + PIN import (cloud-first) ---
   if(!name){showToast('Введи своє ім\'я!');return;}
   if(pin.length!==4||!/^\d{4}$/.test(pin)){showToast('Введи 4-значний PIN!');shakeEl('panel-import');return;}
   const h=hashPin(name,pin);
-  // Check if name exists locally
-  const exists=accts.find(a=>a.name.toLowerCase()===name.toLowerCase());
-  if(exists){
-    // Verify PIN
-    if(exists.pinHash&&exists.pinHash!==h){showToast('Невірний PIN!');shakeEl('panel-import');return;}
-    setCurrentAcct(exists.id);
-    document.getElementById('bestVal').textContent=exists.best;
-    updateMenuBadge();renderAccountList();
-    showToast('Ласкаво повертаєшся, '+name+'!','#56c246');
-    return;
+
+  // Check locally
+  const local=accts.find(a=>a.name.toLowerCase()===name.toLowerCase());
+  if(local){
+    if(local.pinHash&&local.pinHash!==h){showToast('Невірний PIN!');shakeEl('panel-import');return;}
+    _activateAccount(local.id); renderAccountList();
+    showToast('Ласкаво повертаєшся, '+name+'!','#56c246'); return;
   }
-  // New device: create account with same name+pin (best starts at 0 until code sync)
+
+  // Try Firestore cloud lookup
+  showToast('Шукаю акаунт у хмарі…','#4d96ff');
+  if(_firebaseReady){
+    const cloud=await fsGetAccount(h); // doc ID = pinHash
+    if(cloud){
+      if(accts.length>=8){showToast('Максимум 8 гравців!');return;}
+      const id='a'+Date.now();
+      const a2={id,name:cloud.name,best:cloud.best,color:cloud.color||0,
+                pinHash:h,cloudId:h,email:cloud.email||''};
+      accts.push(a2); saveAccounts(accts);
+      _activateAccount(id); renderAccountList();
+      showToast('Акаунт '+cloud.name+' знайдено! Рекорд: '+cloud.best+' 🍎','#56c246');
+      return;
+    }
+  }
+
+  // Not found anywhere — create fresh
   if(accts.length>=8){showToast('Максимум 8 гравців!');return;}
   const id='a'+Date.now();
-  accts.push({id,name,best:0,color:accts.length%8,pinHash:h});
+  accts.push({id,name,best:0,color:accts.length%8,pinHash:h,cloudId:h});
   saveAccounts(accts);
-  setCurrentAcct(id);
-  document.getElementById('bestVal').textContent=0;
-  updateMenuBadge();renderAccountList();
-  showToast('Акаунт '+name+' готовий! Для рекордів — скопіюй код з першого телефону.','#4d96ff');
+  _activateAccount(id); renderAccountList();
+  showToast('Новий акаунт '+name+' створено (рекорд 0 — попередні дані не знайдено)','#ff922b');
 }
 
 // ---- Render ----
@@ -1614,27 +1814,34 @@ function renderAccountList(){
     const active=a.id===cur?'active-acct':'';
     const avClass='av'+(a.color||0);
     const lockIcon=a.pinHash?'🔒':'';
+    const emailIcon=a.email?'📧':'';
+    const syncIcon=a.cloudId?'☁️':'';
     return`<div class="acct-row ${active}" onclick="selectAccount('${a.id}')">
       <div class="acct-avatar ${avClass}">${AV_INITIALS(a.name)}</div>
       <div class="acct-info">
-        <div class="acct-name">${esc(a.name)} <span style="font-size:.75rem;">${lockIcon}</span></div>
+        <div class="acct-name">${esc(a.name)} <span style="font-size:.72rem;">${lockIcon}${emailIcon}${syncIcon}</span></div>
         <div class="acct-best">Рекорд: ${a.best} 🍎</div>
       </div>
+      <button class="acct-del" onclick="openEmailBind('${a.id}',event)" title="Прив'язати пошту" style="background:rgba(77,150,255,.12);color:#4d96ff;font-size:.75rem;width:36px;height:36px;border-radius:10px;">📧</button>
       <button class="acct-del" onclick="showTransferCode('${a.id}',event)" title="Код переносу" style="background:rgba(77,150,255,.12);color:#4d96ff;font-size:.7rem;width:36px;height:36px;border-radius:10px;">📤</button>
       <button class="acct-del" onclick="deleteAccount('${a.id}',event)" title="Видалити">✕</button>
     </div>`;
   }).join('');
 }
 
-function renderLB(){
-  const accts=getAccounts().filter(a=>a.best>0);
-  accts.sort((a,b)=>b.best-a.best);
+function _renderLBData(entries, isGlobal){
   const list=document.getElementById('lbList');
-  if(!accts.length){list.innerHTML='<div class="lb-empty">Ще немає рекордів!<br>Грай і стань першим!</div>';return;}
-  list.innerHTML=accts.map((a,i)=>{
+  if(!list) return;
+  const badge=isGlobal
+    ? '<div class="lb-global-badge">🌍 Глобальна таблиця</div>'
+    : '<div class="lb-global-badge" style="background:linear-gradient(135deg,#aaa,#ccc);">📱 Локальна таблиця (офлайн)</div>';
+  if(!entries.length){
+    list.innerHTML=badge+'<div class="lb-empty">Ще немає рекордів!<br>Грай і стань першим!</div>';return;
+  }
+  const rows=entries.map((a,i)=>{
     const medal=i===0?'1':i===1?'2':i===2?'3':'#'+(i+1);
     const mStyle=i===0?'color:#b8860b;font-size:1.5rem;':i===1?'color:#888;':i===2?'color:#a0522d;':'color:#aaa;';
-    const avClass='av'+(a.color||0);
+    const avClass='av'+((a.color||0)%8);
     return`<div class="lb-row" style="animation-delay:${i*.05}s">
       <div class="lb-rank" style="${mStyle}">${medal}</div>
       <div class="acct-avatar ${avClass}" style="width:32px;height:32px;font-size:.85rem;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-family:'Fredoka One',cursive;margin:0 8px;">${AV_INITIALS(a.name)}</div>
@@ -1642,6 +1849,25 @@ function renderLB(){
       <div class="lb-score">${a.best}</div>
     </div>`;
   }).join('');
+  list.innerHTML=badge+rows;
+}
+
+async function renderLB(){
+  const list=document.getElementById('lbList');
+  if(!list) return;
+  list.innerHTML='<div class="lb-empty">Завантажую… ⏳</div>';
+
+  if(_firebaseReady){
+    try{
+      const global=await fsGetLeaderboard();
+      _globalLB=global;
+      _renderLBData(global, true);
+      return;
+    }catch(e){}
+  }
+  // Fallback: local only
+  const local=getAccounts().filter(a=>a.best>0).sort((a,b)=>b.best-a.best);
+  _renderLBData(local, false);
 }
 
 function clearLB(){
@@ -1685,6 +1911,197 @@ function showToast(msg,color='#ff6b6b'){
 function shakeEl(id){const el=document.getElementById(id);if(!el)return;el.style.animation='none';void el.offsetWidth;el.style.animation='shake .3s ease';}
 
 function getScores(){return[];} // legacy compat
+
+// ============================================================
+//  EMAIL BINDING
+// ============================================================
+let _emailTargetId = null;
+
+function openEmailBind(id, e){
+  e.stopPropagation();
+  const a=getAccounts().find(x=>x.id===id);
+  if(!a) return;
+  _emailTargetId=id;
+  document.getElementById('emailAcctName').textContent=a.name;
+  document.getElementById('bindEmail').value=a.email||'';
+  document.getElementById('emailError').textContent='';
+  ['1','2','3','4'].forEach(i=>{const el=document.getElementById('ep'+i);if(el)el.value='';});
+  showScreen('email-screen');
+}
+
+async function bindEmail(){
+  if(!_emailTargetId) return;
+  const accts=getAccounts();
+  const idx=accts.findIndex(x=>x.id===_emailTargetId);
+  if(idx<0) return;
+  const a=accts[idx];
+  const email=document.getElementById('bindEmail').value.trim().toLowerCase();
+  if(!/^[^@]+@[^@]+\.[^@]+$/.test(email)){
+    document.getElementById('emailError').textContent='Невірний формат пошти!';
+    shakeEl('emailError'); return;
+  }
+  if(a.pinHash){
+    const pin=readPin('ep');
+    if(hashPin(a.name,pin)!==a.pinHash){
+      document.getElementById('emailError').textContent='Невірний PIN!';
+      shakeEl('emailError'); return;
+    }
+  }
+  accts[idx].email=email;
+  saveAccounts(accts);
+  // Save to cloud
+  if(_firebaseReady&&a.cloudId){
+    await fsSetAccount(a.cloudId,{email});
+  }
+  showToast('Пошту '+email+' прив\'язано! 📧','#56c246');
+  showScreen('account-screen');
+  renderAccountList();
+}
+
+// ============================================================
+//  FORGOT PIN / RESET FLOW
+// ============================================================
+let _resetCode='';
+let _resetExpiry=0;
+let _resetTargetId=null;
+
+function showForgotScreen(){
+  if(!_loginTargetId){showScreen('account-screen');return;}
+  const a=getAccounts().find(x=>x.id===_loginTargetId);
+  document.getElementById('forgotAcctName').textContent=a?a.name:'';
+  document.getElementById('forgotError').textContent='';
+  document.getElementById('forgotEmail').value=a&&a.email?a.email:'';
+  showScreen('forgot-screen');
+}
+
+async function sendResetCode(){
+  const email=document.getElementById('forgotEmail').value.trim().toLowerCase();
+  if(!/^[^@]+@[^@]+\.[^@]+$/.test(email)){
+    document.getElementById('forgotError').textContent='Невірний формат пошти!';
+    shakeEl('forgotError'); return;
+  }
+
+  // Find account by email (local + cloud)
+  let target=null;
+  const accts=getAccounts();
+  target=accts.find(a=>a.email&&a.email.toLowerCase()===email);
+
+  if(!target&&_firebaseReady){
+    // Search Firestore by email
+    try{
+      const snap=await _db.collection('snake_accounts').where('email','==',email).limit(1).get();
+      if(!snap.empty){
+        const d=snap.docs[0]; const cd={...d.data(),cloudId:d.id};
+        // Store locally so we can reset
+        const id='a'+Date.now();
+        const existing=accts.find(a=>a.cloudId===d.id);
+        if(existing) target=existing;
+        else {
+          accts.push({id,name:cd.name,best:cd.best,color:cd.color||0,
+                      pinHash:cd.pinHash||'',cloudId:d.id,email:cd.email||''});
+          saveAccounts(accts);
+          target=accts[accts.length-1];
+        }
+      }
+    }catch(e){}
+  }
+
+  if(!target){
+    document.getElementById('forgotError').textContent='Немає прив\'язаних акаунтів з цією поштою!';
+    shakeEl('forgotError'); return;
+  }
+
+  // Generate 6-digit code
+  _resetCode=String(Math.floor(100000+Math.random()*900000));
+  _resetExpiry=Date.now()+15*60*1000; // 15 min
+  _resetTargetId=target.id;
+
+  // Store code in Firestore
+  if(_firebaseReady&&target.cloudId){
+    await fsSetAccount(target.cloudId,{resetCode:_resetCode,resetExpiry:_resetExpiry});
+  }
+
+  // Send email via EmailJS
+  let sent=false;
+  try{
+    if(typeof emailjs!=='undefined'&&EMAILJS_SERVICE!=='YOUR_EMAILJS_SERVICE_ID'){
+      await emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
+        to_email: email,
+        to_name: target.name,
+        reset_code: _resetCode,
+        game_name: 'Мила Змійка'
+      });
+      sent=true;
+    }
+  }catch(e){console.warn('EmailJS error:',e);}
+
+  if(sent){
+    showToast('Код надіслано на '+email+' 📬','#56c246');
+    // Setup reset screen
+    ['1','2','3','4','5','6'].forEach(i=>{const el=document.getElementById('rc'+i);if(el)el.value='';});
+    ['1','2','3','4'].forEach(i=>{const el=document.getElementById('np'+i);if(el)el.value='';});
+    document.getElementById('resetError').textContent='';
+    showScreen('reset-screen');
+    setTimeout(()=>{const e=document.getElementById('rc1');if(e)e.focus();},300);
+  } else {
+    // EmailJS not configured — show code on screen (dev mode)
+    document.getElementById('forgotError').textContent='';
+    showToast('(DEV режим) Код: '+_resetCode+' — скопіюй та введи','#ff922b');
+    ['1','2','3','4','5','6'].forEach(i=>{const el=document.getElementById('rc'+i);if(el)el.value='';});
+    ['1','2','3','4'].forEach(i=>{const el=document.getElementById('np'+i);if(el)el.value='';});
+    document.getElementById('resetError').textContent='';
+    showScreen('reset-screen');
+  }
+}
+
+async function verifyResetCode(){
+  if(!_resetTargetId||!_resetCode){showScreen('forgot-screen');return;}
+  if(Date.now()>_resetExpiry){
+    document.getElementById('resetError').textContent='Код застарів! Запитай новий.';
+    shakeEl('resetError'); return;
+  }
+  const entered=['1','2','3','4','5','6'].map(i=>{
+    const el=document.getElementById('rc'+i);return el?el.value.trim():'';
+  }).join('');
+  if(entered!==_resetCode){
+    document.getElementById('resetError').textContent='Невірний код! Спробуй ще.';
+    shakeEl('resetError');
+    ['1','2','3','4','5','6'].forEach(i=>{const el=document.getElementById('rc'+i);if(el)el.value='';});
+    setTimeout(()=>{const e=document.getElementById('rc1');if(e)e.focus();},100);
+    return;
+  }
+  const newPin=readPin('np');
+  if(newPin.length!==4||!/^\d{4}$/.test(newPin)){
+    document.getElementById('resetError').textContent='Введи новий 4-значний PIN!';
+    shakeEl('resetError'); return;
+  }
+
+  // Update PIN
+  const accts=getAccounts();
+  const idx=accts.findIndex(x=>x.id===_resetTargetId);
+  if(idx<0){showScreen('account-screen');return;}
+  const a=accts[idx];
+  const newH=hashPin(a.name,newPin);
+  accts[idx].pinHash=newH;
+  accts[idx].cloudId=newH; // cloudId = new pinHash
+  saveAccounts(accts);
+
+  // Update Firestore — move to new doc (old cloudId → new one)
+  if(_firebaseReady){
+    const oldCloudId=a.cloudId;
+    await fsSetAccount(newH,{name:a.name,best:a.best,color:a.color||0,
+      pinHash:newH,email:a.email||''});
+    // Clear reset code
+    if(oldCloudId&&oldCloudId!==newH){
+      try{await _db.collection('snake_accounts').doc(oldCloudId).delete();}catch(e){}
+    }
+  }
+
+  _resetCode='';_resetExpiry=0;_resetTargetId=null;_loginTargetId=null;
+  showToast('PIN змінено! Входь з новим PIN 🎉','#56c246');
+  showScreen('account-screen');
+  renderAccountList();
+}
 
 // ============================================================
 //  GAME LOOP
@@ -2112,6 +2529,9 @@ window.addEventListener('resize',resize);
   setupPinInputs('newPin',4);
   setupPinInputs('impPin',4);
   setupPinInputs('loginPin',4,()=>setTimeout(submitLogin,120));
+  setupPinInputs('ep',4);
+  setupPinInputs('rc',6,()=>setTimeout(()=>document.getElementById('np1')&&document.getElementById('np1').focus(),120));
+  setupPinInputs('np',4);
 
   // Load current account best score
   const _initAccts=getAccounts();
